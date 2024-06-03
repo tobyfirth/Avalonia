@@ -148,17 +148,17 @@ namespace Avalonia.Controls
             if (items.Count == 0)
                 return default;
 
+            var orientation = Orientation;
+
             // If we're bringing an item into view, ignore any layout passes until we receive a new
             // effective viewport.
             if (_isWaitingForViewportUpdate)
-                return DesiredSize;
+                return EstimateDesiredSize(orientation, items.Count);
 
             _isInLayout = true;
 
             try
             {
-                var orientation = Orientation;
-
                 _realizedElements ??= new();
                 _measureElements ??= new();
 
@@ -263,6 +263,16 @@ namespace Avalonia.Controls
                     _realizedElements.ItemsReset(_recycleElementOnItemRemoved);
                     break;
             }
+        }
+
+        protected override void OnItemsControlChanged(ItemsControl? oldValue)
+        {
+            base.OnItemsControlChanged(oldValue);
+
+            if (oldValue is not null)
+                oldValue.PropertyChanged -= OnItemsControlPropertyChanged;
+            if (ItemsControl is not null)
+                ItemsControl.PropertyChanged += OnItemsControlPropertyChanged;
         }
 
         protected override IInputElement? GetControl(NavigationDirection direction, IInputElement? from, bool wrap)
@@ -378,7 +388,7 @@ namespace Avalonia.Controls
                 var scrollToElement = GetOrCreateElement(items, index);
                 scrollToElement.Measure(Size.Infinity);
 
-                // Get the expected position of the elment and put it in place.
+                // Get the expected position of the element and put it in place.
                 var anchorU = _realizedElements.GetOrEstimateElementU(index, ref _lastEstimatedElementSizeU);
                 var rect = Orientation == Orientation.Horizontal ?
                     new Rect(anchorU, 0, scrollToElement.DesiredSize.Width, scrollToElement.DesiredSize.Height) :
@@ -420,6 +430,12 @@ namespace Avalonia.Controls
                     root.LayoutManager.ExecuteLayoutPass();
                 }
 
+                // During the previous BringIntoView, the scroll width extent might have been out of date if
+                // elements have different widths. Because of that, the ScrollViewer might not scroll to the correct offset.
+                // After the previous BringIntoView, Y offset should be correct and an extra layout pass has been executed,
+                // hence the width extent should be correct now, and we can try to scroll again.
+                scrollToElement.BringIntoView();
+
                 _scrollToElement = null;
                 _scrollToIndex = -1;
                 return scrollToElement;
@@ -437,20 +453,31 @@ namespace Avalonia.Controls
         {
             Debug.Assert(_realizedElements is not null);
 
-            // If the control has not yet been laid out then the effective viewport won't have been set.
-            // Try to work it out from an ancestor control.
             var viewport = _viewport;
 
             // Get the viewport in the orientation direction.
             var viewportStart = Orientation == Orientation.Horizontal ? viewport.X : viewport.Y;
             var viewportEnd = Orientation == Orientation.Horizontal ? viewport.Right : viewport.Bottom;
 
-            // Get or estimate the anchor element from which to start realization.
-            var (anchorIndex, anchorU) = _realizedElements.GetOrEstimateAnchorElementForViewport(
-                viewportStart,
-                viewportEnd,
-                items.Count,
-                ref _lastEstimatedElementSizeU);
+            // Get or estimate the anchor element from which to start realization. If we are
+            // scrolling to an element, use that as the anchor element. Otherwise, estimate the
+            // anchor element based on the current viewport.
+            int anchorIndex;
+            double anchorU;
+
+            if (_scrollToIndex >= 0 && _scrollToElement is not null)
+            {
+                anchorIndex = _scrollToIndex;
+                anchorU = _scrollToElement.Bounds.Top;
+            }
+            else
+            {
+                (anchorIndex, anchorU) = _realizedElements.GetOrEstimateAnchorElementForViewport(
+                    viewportStart,
+                    viewportEnd,
+                    items.Count,
+                    ref _lastEstimatedElementSizeU);
+            }
 
             // Check if the anchor element is not within the currently realized elements.
             var disjunct = anchorIndex < _realizedElements.FirstIndex || 
@@ -478,6 +505,25 @@ namespace Avalonia.Controls
             }
 
             return orientation == Orientation.Horizontal ? new(sizeU, sizeV) : new(sizeV, sizeU);
+        }
+
+        private Size EstimateDesiredSize(Orientation orientation, int itemCount)
+        {
+            if (_scrollToIndex >= 0 && _scrollToElement is not null)
+            {
+                // We have an element to scroll to, so we can estimate the desired size based on the
+                // element's position and the remaining elements.
+                var remaining = itemCount - _scrollToIndex - 1;
+                var u = orientation == Orientation.Horizontal ? 
+                    _scrollToElement.Bounds.Right :
+                    _scrollToElement.Bounds.Bottom;
+                var sizeU = u + (remaining * _lastEstimatedElementSizeU);
+                return orientation == Orientation.Horizontal ? 
+                    new(sizeU, DesiredSize.Height) : 
+                    new(DesiredSize.Width, sizeU);
+            }
+
+            return DesiredSize;
         }
 
         private double EstimateElementSizeU()
@@ -619,7 +665,7 @@ namespace Avalonia.Controls
                 generator.ItemContainerPrepared(controlItem, item, index);
             }
 
-            controlItem.IsVisible = true;
+            controlItem.SetCurrentValue(Visual.IsVisibleProperty, true);
             return controlItem;
         }
 
@@ -635,7 +681,7 @@ namespace Avalonia.Controls
             if (_recyclePool?.TryGetValue(recycleKey, out var recyclePool) == true && recyclePool.Count > 0)
             {
                 var recycled = recyclePool.Pop();
-                recycled.IsVisible = true;
+                recycled.SetCurrentValue(Visual.IsVisibleProperty, true);
                 generator.PrepareItemContainer(recycled, item, index);
                 generator.ItemContainerPrepared(recycled, item, index);
                 return recycled;
@@ -661,6 +707,7 @@ namespace Avalonia.Controls
 
         private void RecycleElement(Control element, int index)
         {
+            Debug.Assert(ItemsControl is not null);
             Debug.Assert(ItemContainerGenerator is not null);
             
             _scrollAnchorProvider?.UnregisterAnchorCandidate(element);
@@ -673,19 +720,18 @@ namespace Avalonia.Controls
             }
             else if (recycleKey == s_itemIsItsOwnContainer)
             {
-                element.IsVisible = false;
+                element.SetCurrentValue(Visual.IsVisibleProperty, false);
             }
-            else if (element.IsKeyboardFocusWithin)
+            else if (KeyboardNavigation.GetTabOnceActiveElement(ItemsControl) == element)
             {
                 _focusedElement = element;
                 _focusedIndex = index;
-                _focusedElement.LostFocus += OnUnrealizedFocusedElementLostFocus;
             }
             else
             {
                 ItemContainerGenerator!.ClearItemContainer(element);
                 PushToRecyclePool(recycleKey, element);
-                element.IsVisible = false;
+                element.SetCurrentValue(Visual.IsVisibleProperty, false);
             }
         }
 
@@ -703,7 +749,7 @@ namespace Avalonia.Controls
             {
                 ItemContainerGenerator!.ClearItemContainer(element);
                 PushToRecyclePool(recycleKey, element);
-                element.IsVisible = false;
+                element.SetCurrentValue(Visual.IsVisibleProperty, false);
             }
         }
 
@@ -746,15 +792,17 @@ namespace Avalonia.Controls
             }
         }
 
-        private void OnUnrealizedFocusedElementLostFocus(object? sender, RoutedEventArgs e)
+        private void OnItemsControlPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
         {
-            if (_focusedElement is null || sender != _focusedElement)
-                return;
-
-            _focusedElement.LostFocus -= OnUnrealizedFocusedElementLostFocus;
-            RecycleElement(_focusedElement, _focusedIndex);
-            _focusedElement = null;
-            _focusedIndex = -1;
+            if (_focusedElement is not null &&
+                e.Property == KeyboardNavigation.TabOnceActiveElementProperty && 
+                e.GetOldValue<IInputElement?>() == _focusedElement)
+            {
+                // TabOnceActiveElement has moved away from _focusedElement so we can recycle it.
+                RecycleElement(_focusedElement, _focusedIndex);
+                _focusedElement = null;
+                _focusedIndex = -1;
+            }
         }
 
         /// <inheritdoc/>
