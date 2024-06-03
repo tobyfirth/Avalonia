@@ -25,17 +25,17 @@ namespace Avalonia.Win32.Interop.Automation
     public interface ITextRangeProvider
 
     {
-        ITextRangeProvider Clone();
+        ITextRangeProvider? Clone();
         [return: MarshalAs(UnmanagedType.Bool)]
         bool Compare(ITextRangeProvider range);
         int CompareEndpoints(TextPatternRangeEndpoint endpoint, ITextRangeProvider targetRange, TextPatternRangeEndpoint targetEndpoint);
         void ExpandToEnclosingUnit(TextUnit unit);
-        ITextRangeProvider FindAttribute(int attribute, object value, [MarshalAs(UnmanagedType.Bool)] bool backward);
-        ITextRangeProvider FindText(string text, [MarshalAs(UnmanagedType.Bool)] bool backward, [MarshalAs(UnmanagedType.Bool)] bool ignoreCase);
-        object GetAttributeValue(int attribute);
+        ITextRangeProvider? FindAttribute(int attribute, object value, [MarshalAs(UnmanagedType.Bool)] bool backward);
+        ITextRangeProvider? FindText(string text, [MarshalAs(UnmanagedType.Bool)] bool backward, [MarshalAs(UnmanagedType.Bool)] bool ignoreCase);
+        object? GetAttributeValue(int attribute);
         double [] GetBoundingRectangles();
-        IRawElementProviderSimple GetEnclosingElement();
-        string GetText(int maxLength);
+        IRawElementProviderSimple? GetEnclosingElement();
+        string? GetText(int maxLength);
         int Move(TextUnit unit, int count);
         int MoveEndpointByUnit(TextPatternRangeEndpoint endpoint, TextUnit unit, int count);
         void MoveEndpointByRange(TextPatternRangeEndpoint endpoint, ITextRangeProvider targetRange, TextPatternRangeEndpoint targetEndpoint);

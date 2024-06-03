@@ -97,6 +97,7 @@ namespace Avalonia.Win32.Automation
                 UiaPatternId.SelectionItem => ThisIfPeerImplementsProvider<AAP.ISelectionItemProvider>(),
                 UiaPatternId.Toggle => ThisIfPeerImplementsProvider<AAP.IToggleProvider>(),
                 UiaPatternId.Value => ThisIfPeerImplementsProvider<AAP.IValueProvider>(),
+                UiaPatternId.Text => ThisIfPeerImplementsProvider<AAP.ITextProvider>(),
                 _ => null,
             };
         }
